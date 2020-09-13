@@ -31,7 +31,7 @@ clean()
     rm -rf ./src/webrtc/src/out/release
 }
 
-BUILD_TYPE=debug
+BUILD_TYPE=release
 
 while [ "$1" != "" ]; do
     case $1 in
@@ -60,12 +60,15 @@ get_default_platform()
 {
     hash rustup 2>/dev/null || { echo >&2 "Make sure you have rustup installed and properly configured! Aborting."; exit 1; }
 
-    case "$(rustup show active-toolchain)" in 
+    case "$(rustup show active-toolchain)" in
         *"x86_64-apple-darwin"* )
             echo "darwin"
             ;;
         *"x86_64-pc-windows"* )
             echo "win32"
+            ;;
+        *"aarch64-unknown-linux"* )
+            echo "linux-aarch64"
             ;;
         *"x86_64-unknown-linux"* )
             echo "linux"
@@ -82,19 +85,41 @@ then
     exit 1
 fi
 
-export MACOSX_DEPLOYMENT_TARGET="10.10"
-
 # Build WebRTC.
 (
     cd src/webrtc/src
 
-    if [ "${BUILD_TYPE}" = "debug" ]
+    if [ $DEFAULT_PLATFORM = "darwin" ]
     then
-        gn gen -C "${OUTPUT_DIR}"/debug "--args=use_custom_libcxx=false rtc_build_examples=false rtc_build_tools=false rtc_include_tests=false rtc_enable_protobuf=false rtc_use_x11=false rtc_enable_sctp=false"
-        ninja -C "${OUTPUT_DIR}"/debug
+        export MACOSX_DEPLOYMENT_TARGET="10.10"
+    fi
+    if [ $DEFAULT_PLATFORM = "linux-aarch64" ]
+    then
+        export CC=clang
+        export CXX=clang++
+        export AR=ar
+        export NM=nm
+        export LD=LLD
+
+        patch -Np1 -i ../../../webrtc_objc_mac.patch
+
+        if [ "${BUILD_TYPE}" = "debug" ]
+        then
+            /usr/bin/gn gen -C "${OUTPUT_DIR}"/Debug "--args=custom_toolchain=\"//build/toolchain/linux/unbundle:default\" host_toolchain=\"//build/toolchain/linux/unbundle:default\" is_clang=true use_custom_libcxx=false rtc_build_examples=false rtc_build_tools=false rtc_include_tests=false rtc_enable_protobuf=false rtc_use_x11=false clang_use_chrome_plugins=false"
+            /usr/bin/ninja -C "${OUTPUT_DIR}"/Debug
+        else
+            /usr/bin/gn gen -C "${OUTPUT_DIR}"/Release "--args=custom_toolchain=\"//build/toolchain/linux/unbundle:default\" host_toolchain=\"//build/toolchain/linux/unbundle:default\" is_clang=true use_custom_libcxx=false rtc_build_examples=false rtc_build_tools=false rtc_include_tests=false rtc_enable_protobuf=false rtc_use_x11=false is_debug=false clang_use_chrome_plugins=false"
+            /usr/bin/ninja -C "${OUTPUT_DIR}"/Release
+        fi
     else
-        gn gen -C "${OUTPUT_DIR}"/release "--args=use_custom_libcxx=false rtc_build_examples=false rtc_build_tools=false rtc_include_tests=false rtc_enable_protobuf=false rtc_use_x11=false rtc_enable_sctp=false is_debug=false"
-        ninja -C "${OUTPUT_DIR}"/release
+        if [ "${BUILD_TYPE}" = "debug" ]
+        then
+            /usr/bin/gn/gn gen -C "${OUTPUT_DIR}"/Debug "--args=use_custom_libcxx=false rtc_build_examples=false rtc_build_tools=false rtc_include_tests=false rtc_enable_protobuf=false rtc_use_x11=false"
+            /usr/bin/gn/ninja -C "${OUTPUT_DIR}"/Debug
+        else
+            /usr/bin/gn/gn gen -C "${OUTPUT_DIR}"/Release "--args=use_custom_libcxx=false rtc_build_examples=false rtc_build_tools=false rtc_include_tests=false rtc_enable_protobuf=false rtc_use_x11=false is_debug=false "
+            /usr/bin/gn/ninja -C "${OUTPUT_DIR}"/Release
+        fi
     fi
 )
 
@@ -102,11 +127,18 @@ export MACOSX_DEPLOYMENT_TARGET="10.10"
 (
     cd src/rust
 
+    if [ $DEFAULT_PLATFORM = "linux-aarch64" ]
+    then
+        config_arch=arm64
+    elif [ $DEFAULT_PLATFORM = "linux-aarch64" ]
+    then
+        config_arch=x64
+    fi
     if [ "${BUILD_TYPE}" = "debug" ]
     then
-        npm_config_arch=x64 npm_config_target_arch=x64 npm_config_disturl=https://atom.io/download/electron npm_config_runtime=electron npm_config_target=11.2.0 npm_config_build_from_source=true npm_config_devdir=~/.electron-gyp OUTPUT_DIR="${OUTPUT_DIR}" cargo build --features electron
+        npm_config_arch=${config_arch} npm_config_target_arch=${config_arch} npm_config_disturl=https://atom.io/download/electron npm_config_runtime=electron npm_config_target=8.2.5 npm_config_build_from_source=true npm_config_devdir=~/.electron-gyp OUTPUT_DIR="${OUTPUT_DIR}" cargo build --features electron
     else
-        npm_config_arch=x64 npm_config_target_arch=x64 npm_config_disturl=https://atom.io/download/electron npm_config_runtime=electron npm_config_target=11.2.0 npm_config_build_from_source=true npm_config_devdir=~/.electron-gyp RUSTFLAGS="-C link-arg=-s" OUTPUT_DIR="${OUTPUT_DIR}" cargo build --features electron --release
+        npm_config_arch=${config_arch} npm_config_target_arch=${config_arch} npm_config_disturl=https://atom.io/download/electron npm_config_runtime=electron npm_config_target=8.2.5 npm_config_build_from_source=true npm_config_devdir=~/.electron-gyp RUSTFLAGS="-C link-arg=-s" OUTPUT_DIR="${OUTPUT_DIR}" cargo build --features electron --release
     fi
 
     if [ $DEFAULT_PLATFORM = "darwin" ]
@@ -117,7 +149,7 @@ export MACOSX_DEPLOYMENT_TARGET="10.10"
     then
         mkdir -p ../node/build/win32
         cp -f target/${BUILD_TYPE}/ringrtc.dll ../node/build/win32/libringrtc.node
-    elif [ $DEFAULT_PLATFORM = "linux" ]
+    elif [ $DEFAULT_PLATFORM = "linux" ] || [ $DEFAULT_PLATFORM = "linux-aarch64" ]
     then
         mkdir -p ../node/build/linux
         cp -f target/${BUILD_TYPE}/libringrtc.so ../node/build/linux/libringrtc.node
