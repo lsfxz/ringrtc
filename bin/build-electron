@@ -17,8 +17,8 @@ usage()
 {
     echo 'usage: build-electron [-d|-r|-c]
     where:
-        -d to create a debug build (default)
-        -r to create a release build
+        -d to create a debug build
+        -r to create a release build (default)
         -c to clean the build artifacts'
 }
 
@@ -34,7 +34,7 @@ clean()
     rm -rf ./src/webrtc/src/out/release
 }
 
-BUILD_TYPE=debug
+BUILD_TYPE=release
 
 while [ "$1" != "" ]; do
     case $1 in
@@ -92,9 +92,15 @@ case "$(rustup show active-toolchain)" in
         CARGO_TARGET="${CARGO_ARCH}-pc-windows-msvc"
         # Static linking to prevent build errors on Windows ia32
         RUSTFLAGS_WIN="-C target-feature=+crt-static"
+
         ;;
     *"x86_64-unknown-linux"* )
         DEFAULT_PLATFORM="linux"
+        CARGO_TARGET="${CARGO_ARCH}-unknown-linux-gnu"
+        ;;
+    *"aarch64-unknown-linux"* )
+        DEFAULT_PLATFORM="linux"
+        LINUX_ARCH="aarch64"
         CARGO_TARGET="${CARGO_ARCH}-unknown-linux-gnu"
         ;;
     * )
@@ -110,14 +116,38 @@ export MACOSX_DEPLOYMENT_TARGET="10.10"
 (
     cd src/webrtc/src
     WEBRTC_ARGS="target_cpu=\"${GN_ARCH}\" rtc_build_examples=false rtc_build_tools=false rtc_include_tests=false rtc_enable_protobuf=false rtc_use_x11=false rtc_enable_sctp=false"
+    AARCH64_WEBRTC_ARGS="custom_toolchain=\"//build/toolchain/linux/unbundle:default\" host_toolchain=\"//build/toolchain/linux/unbundle:default\" target_cpu=\"${GN_ARCH}\" is_clang=true use_custom_libcxx=false rtc_build_examples=false rtc_build_tools=false rtc_include_tests=false rtc_enable_protobuf=false rtc_use_x11=false rtc_enable_sctp=false clang_use_chrome_plugins=false"
+
+    if [ ${LINUX_ARCH} = "aarch64" ]
+    then
+        export CC=clang
+        export CXX=clang++
+        export AR=ar
+        export NM=nm
+        export LD=LLD
+    fi
 
     if [ "${BUILD_TYPE}" = "debug" ]
+
     then
-        gn gen -C "${OUTPUT_DIR}"/debug "--args=${WEBRTC_ARGS}"
-        ninja -C "${OUTPUT_DIR}"/debug
+        if [ ${LINUX_ARCH} = "aarch64" ]
+        then
+            /usr/bin/gn-m87 gen -C "${OUTPUT_DIR}"/debug "--args=${AARCH64_WEBRTC_ARGS}"
+            /usr/bin/ninja -C "${OUTPUT_DIR}"/debug
+        else
+            gn gen -C "${OUTPUT_DIR}"/debug "--args=${WEBRTC_ARGS}"
+            ninja -C "${OUTPUT_DIR}"/debug
+        fi
     else
-        gn gen -C "${OUTPUT_DIR}"/release "--args=${WEBRTC_ARGS} is_debug=false"
-        ninja -C "${OUTPUT_DIR}"/release
+
+        if [ ${LINUX_ARCH} = "aarch64" ]
+        then
+            /usr/bin/gn-m87 gen -C "${OUTPUT_DIR}"/release "--args=${AARCH64_WEBRTC_ARGS} is_debug=false"
+            /usr/bin/ninja -C "${OUTPUT_DIR}"/release
+        else
+            gn gen -C "${OUTPUT_DIR}"/release "--args=${WEBRTC_ARGS} is_debug=false"
+            ninja -C "${OUTPUT_DIR}"/release
+        fi
     fi
 )
 
